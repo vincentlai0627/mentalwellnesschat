@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Presentation Chatbox</title>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, "Noto Sans TC", sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+    }
+
+    .app {
+      max-width: 720px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: white;
+    }
+
+    header {
+      padding: 16px;
+      background: #2563eb;
+      color: white;
+      text-align: center;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    header p {
+      margin: 6px 0 0;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .setup {
+      padding: 16px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #f9fafb;
+    }
+
+    .setup input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+
+    .setup button,
+    .composer button,
+    .admin-panel button {
+      padding: 12px 16px;
+      font-size: 16px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .setup button:hover,
+    .composer button:hover,
+    .admin-panel button:hover {
+      background: #1d4ed8;
+    }
+
+    .chat {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .message {
+      margin-bottom: 14px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .message .meta {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+
+    .bubble {
+      padding: 10px 12px;
+      border-radius: 12px;
+      max-width: 80%;
+      line-height: 1.4;
+      word-wrap: break-word;
+    }
+
+    .student .bubble {
+      background: #e5e7eb;
+      align-self: flex-start;
+    }
+
+    .host .bubble {
+      background: #dbeafe;
+      align-self: flex-end;
+    }
+
+    .host .meta {
+      text-align: right;
+    }
+
+    .composer {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      border-top: 1px solid #e5e7eb;
+      background: #ffffff;
+    }
+
+    .composer input {
+      flex: 1;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+    }
+
+    .admin-panel {
+      padding: 12px;
+      background: #fff7ed;
+      border-bottom: 1px solid #fed7aa;
+      font-size: 14px;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 8px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 480px) {
+      header h1 {
+        font-size: 19px;
+      }
+
+      .bubble {
+        max-width: 92%;
+      }
+
+      .composer {
+        flex-direction: column;
+      }
+
+      .composer button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <h1>Presentation Live Chat</h1>
+      <p id="modeLabel">Student Mode</p>
+    </header>
+
+    <div id="adminPanel" class="admin-panel hidden">
+      <strong>主持人模式</strong>
+      <div class="small">
+        你現在可以代表 Host 回覆同學訊息。
+      </div>
+      <br />
+      <button onclick="clearChat()">清空聊天紀錄</button>
+    </div>
+
+    <div id="setup" class="setup">
+      <input id="nameInput" placeholder="輸入你的名字 / 暱稱" />
+      <button onclick="saveName()">開始聊天</button>
+      <div class="small">
+        如果你是主持人，可以在網址後面加 <strong>?admin=true</strong>
+      </div>
+    </div>
+
+    <div id="chat" class="chat"></div>
+
+    <div class="composer">
+      <input id="messageInput" placeholder="輸入訊息..." onkeydown="handleKey(event)" />
+      <button onclick="sendMessage()">送出</button>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getDatabase,
+      ref,
+      push,
+      onValue,
+      remove,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    /*
+      在 Firebase Project Settings 裡面找到你的 config，
+      然後貼在下面。
+    */
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const database = getDatabase(app);
+    const messagesRef = ref(database, "presentation-chat/messages");
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const isAdmin = urlParams.get("admin") === "true";
+
+    let username = "";
+    let messages = [];
+
+    const setupEl = document.getElementById("setup");
+    const chatEl = document.getElementById("chat");
+    const nameInput = document.getElementById("nameInput");
+    const messageInput = document.getElementById("messageInput");
+    const modeLabel = document.getElementById("modeLabel");
+    const adminPanel = document.getElementById("adminPanel");
+
+    if (isAdmin) {
+      username = "Host";
+      setupEl.classList.add("hidden");
+      adminPanel.classList.remove("hidden");
+      modeLabel.textContent = "Host Mode";
+    }
+
+    window.saveName = function () {
+      const name = nameInput.value.trim();
+
+      if (!name) {
+        showNotice("請先輸入名字");
+        return;
+      }
+
+      username = name;
+      setupEl.classList.add("hidden");
+    };
+
+    window.sendMessage = function () {
+      const text = messageInput.value.trim();
+
+      if (!text) return;
+
+      if (!username) {
+        showNotice("請先輸入名字");
+        return;
+      }
+
+      push(messagesRef, {
+        name: username,
+        text: text,
+        role: isAdmin ? "host" : "student",
+        createdAt: serverTimestamp()
+      });
+
+      messageInput.value = "";
+    };
+
+    window.handleKey = function (event) {
+      if (event.key === "Enter") {
+        sendMessage();
+      }
+    };
+
+    window.clearChat = function () {
+      const confirmed = window.confirm("確定要清空所有聊天紀錄？");
+      if (confirmed) {
+        remove(messagesRef);
+      }
+    };
+
+    function showNotice(text) {
+      const notice = document.createElement("div");
+      notice.textContent = text;
+      notice.style.position = "fixed";
+      notice.style.left = "50%";
+      notice.style.bottom = "24px";
+      notice.style.transform = "translateX(-50%)";
+      notice.style.background = "#111827";
+      notice.style.color = "white";
+      notice.style.padding = "10px 14px";
+      notice.style.borderRadius = "8px";
+      notice.style.fontSize = "14px";
+      notice.style.zIndex = "999";
+
+      document.body.appendChild(notice);
+
+      setTimeout(() => {
+        notice.remove();
+      }, 1800);
+    }
+
+    function renderMessages() {
+      chatEl.innerHTML = "";
+
+      messages.forEach((message) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "message " + (message.role === "host" ? "host" : "student");
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = message.name || "Anonymous";
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = message.text || "";
+
+        wrapper.appendChild(meta);
+        wrapper.appendChild(bubble);
+        chatEl.appendChild(wrapper);
+      });
+
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    onValue(messagesRef, (snapshot) => {
+      const data = snapshot.val();
+
+      if (!data) {
+        messages = [];
+      } else {
+        messages = Object.values(data).sort((a, b) => {
+          return (a.createdAt || 0) - (b.createdAt || 0);
+        });
+      }
+
+      renderMessages();
+    });
+  </script>
+</body>
+</html>
